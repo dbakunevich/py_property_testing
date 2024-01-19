@@ -1,12 +1,42 @@
+from loguru import logger
 from dataclasses import dataclass
-from typing import Sequence, Optional, Any, List
+from typing import Sequence, Optional, Any, List, Type
 
 import re
 import sys
 import random
+import builtins
 from builtins import getattr
 
-from sympy import S, Symbol, sympify, Interval, Union, solve_univariate_inequality
+from sympy import (
+    S,
+    Symbol,
+    sympify,
+    Interval,
+    Intersection,
+    solve_univariate_inequality,
+)
+
+
+class DefaultValuesForType:
+    default_int: int = 0
+    default_float: float = 0.0
+    default_str: str = ""
+
+    @classmethod
+    def get_default_value_for_type(cls, value_type: str | Type) -> Any:
+        if isinstance(value_type, str):
+            value_type = globals().get(value_type, None)
+
+        if value_type == int:
+            return cls.default_int
+        elif value_type == float:
+            return cls.default_float
+        elif value_type == str:
+            return cls.default_str
+        else:
+            logger.error(f"This type {str(value_type)} is not currently supported")
+            return None
 
 
 @dataclass
@@ -26,7 +56,15 @@ class ArgumentInfo:
         return Symbol(self.argument_name)
 
     @property
-    def ranges_of_acceptable_value(self) -> Union:
+    def evaluating_acceptable_values(self) -> Any:
+        if self.argument_type == "int" or self.argument_type == "float":
+            return self.__get_ranges_for_int_or_float()
+        if self.argument_type == "str":
+            return  # TODO
+        logger.error(f"This type {self.argument_type} is not currently supported")
+        return None
+
+    def __get_ranges_for_int_or_float(self) -> Intersection:
         if self.argument_type == "int":
             max_value_int = sys.maxsize
             min_value_int = -max_value_int - 1
@@ -38,10 +76,10 @@ class ArgumentInfo:
             bounds = [Interval(min_value_float, max_value_float)]
 
         else:
-            assert False, "Right now can work only with int and float arguments"
+            assert False, "Type in this function must be only int or float"
 
         if self.argument_constrains is None:
-            return Union(bounds)
+            return Intersection(bounds)
         elif isinstance(self.argument_constrains, str):
             self.argument_constrains = [self.argument_constrains]
 
@@ -51,13 +89,12 @@ class ArgumentInfo:
             ) in constraint.lower():
                 values_in_brackets = re.search(r"\((.*?)\)", constraint)
                 if values_in_brackets is None:
-                    print("WARNING: can't parse range constraint %s" % constraint)
+                    logger.warning(f"Can't parse range constraint {constraint}")
                     continue
                 values: List[str] = values_in_brackets.group(1).split(",")
                 if len(values) != 2:
-                    print(
-                        "WARNING: in range constraint %s more or less them 2 values"
-                        % constraint
+                    logger.warning(
+                        f"In range constraint {constraint} more or less them 2 values"
                     )
                     continue
                 bounds.append(Interval(float(values[0]), float(values[1])))
@@ -77,16 +114,18 @@ class ArgumentInfo:
                         for interval in solution.args:
                             bounds.append(Interval(interval.start, interval.end))
                     else:
-                        print(
-                            f"WARNING: Unexpected result from solve_univariate_inequality: {solution}"
+                        logger.warning(
+                            f"Unexpected result from solve_univariate_inequality: {solution}"
                         )
                 except Exception as e:
-                    print(f"WARNING: can't parse this inequality {constraint}; {e}")
+                    logger.warning(
+                        f"WARNING: can't parse this inequality {constraint}; {e}"
+                    )
                     continue
             else:
-                print("WARNING: can't parse this constraint %s" % constraint)
+                logger.warning("WARNING: can't parse this constraint %s" % constraint)
                 continue
-        return Union(*[constr for constr in bounds])
+        return Intersection(*[constr for constr in bounds])
 
     @property
     def argument_type_type(self) -> type:
@@ -94,8 +133,6 @@ class ArgumentInfo:
             return getattr(__builtins__, self.argument_type)
         except AttributeError:
             try:
-                import builtins
-
                 return getattr(builtins, self.argument_type)
             except AttributeError:
                 raise ValueError(f"Unsupported argument_type: {self.argument_type}")
@@ -106,15 +143,15 @@ class ArgumentInfo:
             return []
         return [self.argument_type_type(val) for val in self.corner_value]
 
-    def get_random_value_from_interval(self, intervals: Union):
+    def get_random_value_from_interval(self, intervals: Intersection):
         for _ in range(10):
             try:
-                if intervals.is_Union:
+                if intervals.is_Intersection:
                     valid_intervals = [
                         interval for interval in intervals.args if interval.is_Interval
                     ]
                     if not valid_intervals:
-                        raise ValueError("No valid Interval found in Union")
+                        raise ValueError("No valid Interval found in Intersection")
 
                     random_interval = random.choice(valid_intervals)
                 elif intervals.is_Interval:
@@ -141,24 +178,36 @@ class ArgumentInfo:
             return random.choice(self.corner_values_list_casts)
         raise ValueError("Can't get num from interval")
 
-    def get_random_value(self) -> Any:
-        if (
-            len(self.corner_values_list_casts) == 0
-            and len(self.ranges_of_acceptable_value.args) == 0
-        ):
-            assert False, "Can't possible argument values"
-        elif len(self.corner_values_list_casts) == 0:
-            intervals = self.ranges_of_acceptable_value
-            return self.get_random_value_from_interval(intervals)
-        elif len(self.ranges_of_acceptable_value.args) == 0:
-            return random.choice(self.corner_values_list_casts)
-        else:
-            random_number = random.random()
-            if random_number < 0.25:
+    def get_random_int_or_float(self) -> int | float:
+        ranges = self.__get_ranges_for_int_or_float()
+        try:
+            if len(self.corner_values_list_casts) == 0 and len(ranges.args) == 0:
+                assert False, "Can't possible argument values"
+                return None
+            elif len(self.corner_values_list_casts) == 0:
+                intervals = ranges
+                return self.get_random_value_from_interval(intervals)
+            elif len(ranges.args) == 0:
                 return random.choice(self.corner_values_list_casts)
             else:
-                intervals = self.ranges_of_acceptable_value
-                return self.get_random_value_from_interval(intervals)
+                random_number = random.random()
+                if random_number < 0.25:
+                    return random.choice(self.corner_values_list_casts)
+                else:
+                    intervals = ranges
+                    return self.get_random_value_from_interval(intervals)
+        except Exception as e:
+            logger.exception(e)
+            if self.argument_type == "int":
+                return DefaultValuesForType.get_default_value_for_type("int")
+            return DefaultValuesForType.get_default_value_for_type("float")
+
+    def get_random_value(self) -> Any:
+        if self.argument_type == "int" or self.argument_type == "float":
+            return self.get_random_int_or_float()
+        if self.argument_type == "str":
+            return  # TODO
+        return None
 
     def __eq__(self, other):
         return (

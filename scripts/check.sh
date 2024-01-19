@@ -11,4 +11,6 @@ poetry run mypy tests/.
 poetry run flake8 property_testing/.
 poetry run flake8 tests/.
 
-poetry run pytest
+PROPERTY_TESTING=1 poetry run pytest
+
+# PROPERTY_TESTING=1 poetry run python examples/
