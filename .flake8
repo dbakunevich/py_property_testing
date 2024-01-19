@@ -1,0 +1,11 @@
+[flake8]
+max-line-length = 888
+extend-ignore = E203
+exclude =
+    .mypy_cache,
+    .pytest_cache,
+    .vscode,
+    .venv,
+    build,
+    generated,
+    venv

@@ -1,0 +1,10 @@
+/**/.pytest_cache/
+/**/myenv/
+/**/.venv/
+/**/venv/
+/**/.mypy_cache
+/**/__pycache__/
+*.py[cod]
+/build/
+/dist/
+.vscode
